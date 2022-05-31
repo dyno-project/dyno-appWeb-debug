@@ -1,0 +1,1149 @@
+<!doctype html>
+<!-- HiVEMQ
+https://websocketclient.hivemq.cloud/?username=ugym-devices&host=3a8247b564f04a0a81e7e1d070882e1e.s1.eu.hivemq.cloud&port=8884
+
+-------------------------------
+Topic:
+00:11:22:33:44:55/cmd
+
+Message:
+{"cmd":"要求量測", "name":"Paul Kang", "pic":"https://profile.line-scdn.net/0m00af3784725150d454061f6166cf75d95eb255c87861", "phone":"0955039022"}
+------------------------------------
+Topic:
+00:11:22:33:44:55/ble
+
+Message:
+{"ble_online":true}
+------------------------------------
+Topic:
+00:11:22:33:44:55/dyna_data
+
+Message:
+{"measurement":32.2}
+------------------------------------
+-->
+<html lang="en">
+
+  <head>
+    <meta charset="UTF-8">
+    <title>握力器</title>
+    <link rel="stylesheet" href="main.css">
+  </head>
+
+  <body>      
+    <script>
+      var app_ver="v0.9p";
+      var useLocalAPI=false;
+      var apiSite=(useLocalAPI)?"http://localhost:5000/":"https://dyno-api.herokuapp.com/";
+    </script>
+    <script src="js/jquery-3.5.0.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.js" type="text/javascript"></script>   
+            
+<!--    <link rel="stylesheet" href="css/loading.css" />-->
+<!--    <script src="js/loading.js"></script>   -->
+    
+          
+<script>
+// For errord of toggle_beep() and set_settings() not defined, move to beginning
+      
+      function set_settings(){
+
+        $("#controller_name_input").val(controller_name); 
+        
+        $("#msgDialog").hide();
+        $("#settings").show();
+        
+        
+      }
+      
+      function 要求量測(user_info) {  
+        
+        if (!app_status.internetOnline) {
+          alert("請檢查網際網路連線!");
+          return;
+        }
+        
+        if (!app_status.mqttOnline) {
+          alert("資料庫未連線，請洽管理員!");
+          return;
+        }        
+        
+        if (!app_status.dynoOnline) {
+          alert("握力器尚未連線，請打開握力器!");
+          return;
+        }        
+          
+        $("#gear_icon").hide();
+              
+        if (confirm(user_info.name + " 要求握力量測!\n\n如果名字跟您不符，請取消量測\n重新再從 手機 點擊 進行量測!")){
+          $(".content").hide()
+          userID=user_info.userid;
+          
+          $("#user_name").text("暱稱: "+user_info.name);
+          $("#user_phone").text("電話: "+user_info.phone);
+          $("#user_pic").attr('src', user_info.pic);
+          $("#request").show();  
+          current_state=1;
+          beep(); // depends on beep_enable
+        } else {
+          $("#user_name").text("");
+          $("#user_phone").text("");
+          $("#user_pic").attr('src', "");    
+          $("#gear_icon").show() 
+          current_state=0;
+          beep(); // depends on beep_enable
+        }
+        
+        $("#measureRightHand").text("000.0");
+        $("#measureRightHand2").text("000.0");
+        $("#measureLeftHand").text("000.0");        
+      }
+      
+      function 取消量測(){
+        //window.location.href = window.location.href;
+        if (confirm("取消或放棄量測，資料將被清除。要再量測必須從手機 點擊 進行量測")){
+          current_state=0;
+          $(".content").hide();
+          $("#intro").show();
+          $("#gear_icon").show()        
+          beep(); // depends on beep_enable
+        }
+        
+      }
+      
+      function 開始量測(){
+        $(".content").hide();
+        
+        $("#measureRight").show();
+        $("#status").text("進行右手握力量測");
+        
+        current_state=2;
+        
+        beep(); // depends on beep_enable      
+      }
+      
+      function 量測左手(){
+        $(".content").hide()
+
+        $("#measureLeft").show();
+        $("#status").text("進行左手握力量測");   
+        
+        current_state=3;        
+        
+        beep(); // depends on beep_enable
+      }      
+      
+      // called when the mqtt_client connects
+      function onConnect() {
+        // Once a connection has been made, make a subscription and send a message.
+        console.log("MQTT onConnect");
+        app_status.mqttOnline=true;
+        $("#mqtt_status").text("已連線");               
+        $("#mqtt_status").css("background-color", "green");  
+        $("#資料連線狀態").hide();
+        $("#檢查連線按鈕").hide();
+        
+        if ($("#controller_name_input").val() !=""){
+          mqtt_client.subscribe($("#controller_name_input").val()+"/#"); 
+          publish_app_online();
+        } else {
+          console.log("握力器名稱不得為空白");
+        }
+      }
+
+      function doFail(e){
+        console.log(e);
+        console.log("請確認網路是否可連上網際網路");
+        
+      }
+
+      // called when the mqtt_client loses its connection
+      function onConnectionLost(responseObject) {
+        if (responseObject.errorCode !== 0) {
+          console.log("onConnectionLost:"+responseObject.errorMessage);
+          app_status.mqttOnline=false;
+          $("#mqtt_status").text("未連線");               
+          $("#mqtt_status").css("background-color", "red"); 
+          
+          checkInternet();
+        }
+      }
+
+      // called when a message arrives
+      function onMessageArrived(message) {
+        console.log("onMessageArrived:");
+        
+        var topic=message.destinationName.split('/');
+        var sn         = topic[0];
+        var cmd_status = topic[1];
+        console.log(sn, cmd_status);
+        
+        switch(cmd_status) {
+          case "dyno_online":
+              var online_info=JSON.parse(message.payloadString);
+              console.log(online_info);    
+              握力器最後上線時間=Date.now();
+            
+              if (online_info.status=="OK"){
+                app_status.dynoOnline=true;
+                $("#dyno_status").text("已連線");               
+                $("#dyno_status").css("background-color", "green");  
+                $("#握力器連線狀態").text("狀態: "+online_info.status); 
+                $("#握力器連線狀態").hide();    
+              } else {
+                app_status.dynoOnline=false;
+                $("#dyno_status").text("未連線");               
+                $("#dyno_status").css("background-color", "red");   
+                $("#握力器連線狀態").text("狀態: "+online_info.status);                
+                $("#握力器連線狀態").show();                 
+              }            
+              break;    
+          case "dyno_offline": //目前沒用到
+              var online_info=JSON.parse(message.payloadString);
+              console.log(online_info);   
+              握力器最後上線時間=Date.now();
+              app_status.dynoOnline=false;
+              $("#dyno_status").text("未連線");               
+              $("#dyno_status").css("background-color", "red");   
+              $("#握力器連線狀態").text("狀態: "+online_info.status);                
+              $("#握力器連線狀態").show();                
+              break;            
+          case "cmd":
+              var user_info=JSON.parse(message.payloadString);
+              console.log(user_info);
+              if (current_state<0) {
+                alert("連線有問題，無法執行命令");
+                return;
+              }
+              if (user_info.cmd=="要求量測"){
+                 if (current_state==0) 要求量測(user_info); 
+              }
+              break;
+          case "ble":
+              var ble=JSON.parse(message.payloadString);
+              console.log(ble);
+              //ble.online true/false 代表 ESP32 有無連上握力器的 BLE
+              break;
+          case "dyno_data":
+              console.log(message.payloadString);            
+              var dyna_data=JSON.parse(message.payloadString);
+              console.log(dyna_data);
+              //dyna_data.measurement string 代表 握力器 傳來的測量值
+              process_dyno_data(dyna_data);
+              break;  
+          case "app_online":
+              var online_info=JSON.parse(message.payloadString);   
+              //console.log(online_info);
+              MQTT最後連線時間=online_info;
+              app_status.mqttOnline=true;
+              $("#mqtt_status").text("已連線");               
+              $("#mqtt_status").css("background-color", "green");  
+              break;
+          default:
+            console.log("cmd/status:", cmd_status);
+            var cmd_status_data=JSON.parse(message.payloadString);
+            console.log(cmd_status_data);            
+        }
+//        if (cmd_status=="cmd"){
+//          var user_info=JSON.parse(message.payloadString);
+//          console.log(user_info);
+//          
+//          if (user_info.cmd=="要求量測" && current_state==0) 要求量測(user_info);
+//          
+//        }
+        
+
+      }
+          
+      function publish_app_online(){
+        var message; 
+          message = new Paho.MQTT.Message(Date.now().toString());
+          message.destinationName = controller_name+"/app_online"; //"Orange0001/app_online";
+          message.qos=0; //不見得要 1, 0 應該也可以
+          mqtt_client.send(message);
+      }
+      
+      function publish_state(){
+        var message; 
+        //console.log(current_state);
+        if (app_status.mqttOnline){
+          message = new Paho.MQTT.Message('{"status":"'+states[current_state]+'", "time_stamp":"'+Date.now().toString()+'"}');
+          message.destinationName = controller_name+"/status"; //"Orange0001/status";
+          message.qos=0; //不見得要 1, 0 應該也可以
+          mqtt_client.send(message);
+        }
+      }
+      
+//      async function uploadByAPI(){
+//        
+//        var paramToSend=apiSite+"?API=11&DynoSN="+controller_name+
+//                                "&UserId="+userID+
+//                                "&LeftHand="  +$("#measureLeftHand").text()+
+//                                "&RightHand=" +$("#measureRightHand").text()+
+//                                "&Measure_time="+Date.now().toString();   
+//        console.log(paramToSend);        
+//
+//        //$.loading.start('上傳資料');
+//        
+//        await fetch(paramToSend)
+//        .then(response => response.text())
+//        .then((text) => {
+//          console.log(text);
+//        })
+//        .catch((error)=>{
+//          console.log('There has been a problem with your fetch operation: ', error.message);
+//        })     
+
+        
+//          await fetch(apiSite)
+//          .then(response => response.json())
+//          .then((json) => {
+//            //console.log(json);
+//            console.log("Internet Online");
+//            app_status.internetOnline=true;
+//          })
+//          .catch((error)=>{
+//            console.log('There has been a problem with your fetch operation: ', error.message);
+//            app_status.internetOnline=false;
+//           })     
+//
+//          if (app_status.internetOnline){
+//            $("#internet_status").text("已連線");               
+//            $("#internet_status").css("background-color", "green");   
+//          } else {
+//            $("#internet_status").text("未連線");               
+//            $("#internet_status").css("background-color", "red"); 
+//            $("#檢查連線按鈕").show();
+//          }        
+//          
+//          //$.loading.end();
+//          alert("資料上傳成功");
+//          
+//          // back to the initial screen
+//          current_state=0;
+//          $(".content").hide();
+//          $("#intro").show();
+//          $("#gear_icon").show()        
+//          beep(); // depends on beep_enable
+//          
+//      }
+      
+//      function publish(pub_msg){
+//        var message;
+//        message = new Paho.MQTT.Message(pub_msg);
+//        message.destinationName = "presence";
+//        mqtt_client.send(message);      
+//      }      
+      
+      function checkInternet(){
+        fetch('https://jsonplaceholder.typicode.com/todos/1')
+        .then(response => response.json())
+        .then((json) => {
+          //console.log(json);
+          console.log("Internet Online");
+          app_status.internetOnline=true;
+        })
+        .catch((error)=>{
+          console.log('There has been a problem with your fetch operation: ', error.message);
+          app_status.internetOnline=false;
+         })     
+        
+        if (app_status.internetOnline){
+          $("#internet_status").text("已連線");               
+          $("#internet_status").css("background-color", "green");  
+          $("#網路連線狀態").hide();
+        } else {
+          $("#internet_status").text("未連線");               
+          $("#internet_status").css("background-color", "red"); 
+          $("#網路連線狀態").show();
+          $("#檢查連線按鈕").show();
+        }
+      }
+       
+      function 檢查連線(){
+        location.reload(); //reset
+      }
+
+      function 設定controller_name(){
+        var controller_nameInput=$("#controller_name_input").val();
+        console.log(controller_nameInput);
+        
+        if (controller_nameInput=="") {
+          alert("不得為空白，請重新輸入");
+        } else {
+          localStorage.setItem('controller_name', controller_nameInput);
+          location.reload();
+        }        
+        
+//        var mac_addr_reg= new RegExp(/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/);
+//
+//        if ((controller_nameInput=="") || !(mac_addr_reg.test(controller_nameInput))) {
+//          alert("不得為空白 或 格式不對，請重新輸入");
+//        } else {
+//          localStorage.setItem('controller_name', controller_nameInput);
+//          location.reload();
+//        }
+      }
+      
+      function 取消設定(){
+        $("#settings").hide();
+      }
+      
+      function process_dyno_data(dyna_data){
+        flash_reading();
+        console.log(current_state, typeof dyna_data.value);
+        if (current_state==2) {
+          $("#measureRightHand").text(dyna_data.value/10);
+          $("#measureRightHand2").text(dyna_data.value/10);
+        }
+        else if (current_state==3)
+          $("#measureLeftHand").text(dyna_data.value/10);
+        else if (current_state==0)
+          $("#measureDyno").text(dyna_data.value/10);
+      };
+            
+      function beep() {
+        if(beep_enable) {
+          var snd = new Audio("data:audio/wav;base64,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qJrx4KOQjahZxWbcZgztj2c49nKmkId44S71j0c8eV9yDK6uPRzx5X18eDvjvQ6yKo9ZSS6l//8elePK/Lf//IInrOF/FvDoADYAGBMGb7FtErm5MXMlmPAJQVgWta7Zx2go+8xJ0UiCb8LHHdftWyLJE0QIAIsI+UbXu67dZMjmgDGCGl1H+vpF4NSDckSIkk7Vd+sxEhBQMRU8j/12UIRhzSaUdQ+rQU5kGeFxm+hb1oh6pWWmv3uvmReDl0UnvtapVaIzo1jZbf/pD6ElLqSX+rUmOQNpJFa/r+sa4e/pBlAABoAAAAA3CUgShLdGIxsY7AUABPRrgCABdDuQ5GC7DqPQCgbbJUAoRSUj+NIEig0YfyWUho1VBBBA//uQZB4ABZx5zfMakeAAAAmwAAAAF5F3P0w9GtAAACfAAAAAwLhMDmAYWMgVEG1U0FIGCBgXBXAtfMH10000EEEEEECUBYln03TTTdNBDZopopYvrTTdNa325mImNg3TTPV9q3pmY0xoO6bv3r00y+IDGid/9aaaZTGMuj9mpu9Mpio1dXrr5HERTZSmqU36A3CumzN/9Robv/Xx4v9ijkSRSNLQhAWumap82WRSBUqXStV/YcS+XVLnSS+WLDroqArFkMEsAS+eWmrUzrO0oEmE40RlMZ5+ODIkAyKAGUwZ3mVKmcamcJnMW26MRPgUw6j+LkhyHGVGYjSUUKNpuJUQoOIAyDvEyG8S5yfK6dhZc0Tx1KI/gviKL6qvvFs1+bWtaz58uUNnryq6kt5RzOCkPWlVqVX2a/EEBUdU1KrXLf40GoiiFXK///qpoiDXrOgqDR38JB0bw7SoL+ZB9o1RCkQjQ2CBYZKd/+VJxZRRZlqSkKiws0WFxUyCwsKiMy7hUVFhIaCrNQsKkTIsLivwKKigsj8XYlwt/WKi2N4d//uQRCSAAjURNIHpMZBGYiaQPSYyAAABLAAAAAAAACWAAAAApUF/Mg+0aohSIRobBAsMlO//Kk4soosy1JSFRYWaLC4qZBYWFRGZdwqKiwkNBVmoWFSJkWFxX4FFRQWR+LsS4W/rFRb/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////VEFHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAU291bmRib3kuZGUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMjAwNGh0dHA6Ly93d3cuc291bmRib3kuZGUAAAAAAAAAACU=");  
+          snd.play();
+        }
+      }
+
+      function toggle_beep(){
+        if (beep_enable==false){
+          beep_enable=true;
+          $("#spkr_icon").attr("src", "images/spkr_on.png");
+        }else {
+          beep_enable=false;
+          $("#spkr_icon").attr("src", "images/spkr_off.png");          
+        }
+      }
+      
+      function flash_reading(){
+        $("#measureRightHand").css("background-color", "black"); 
+        $("#measureLeftHand").css("background-color", "black"); 
+        $("#measureDyno").css("background-color", "black"); 
+        setTimeout(()=>{
+          $("#measureRightHand").css("background-color", "antiquewhite");
+          $("#measureLeftHand").css("background-color", "antiquewhite");
+          $("#measureDyno").css("background-color", "antiquewhite");
+        }, 300);
+      }
+        
+</script>                                       
+             
+<!--
+    <div id="status" style="text-align:center; margin-top:10px; color:darkblue; font-weight:bold; font-size:24px; font-family: Arial, Helvetica, sans-serif;">
+      握力器 已連線
+    </div>         
+-->
+    <img src="images/金機.png" style="width:200px; margin:20px">
+    <label id="version" style="margin-left:-65px">Version</label>
+          
+    <img id="gear_icon" onclick="set_settings()" src="images/gear_icon.png" style="width:30px; float:right; margin-right:20px; margin-top:20px">
+    <img id="spkr_icon" onclick="toggle_beep()" src="images/spkr_off.png" style="width:30px; float:right; margin-right:10px; margin-top:23px">
+    <img id="spkr_icon" onclick="location.reload()" src="images/refresh.png" style="width:30px; float:right; margin-right:10px; margin-top:23px">          
+           
+    <div id="settings" style="float:right; background-color:white; border-radius:10px; margin-top:50px; margin-right:-120px; padding: 10px; display:none; z-index:2">
+        <p style="font-family:sans-serif; font-size:14px">連線握力器:</p>
+        <input id="controller_name_input" style="width:130px; font-size:14px; padding:5px; margin-top:5px" placeholder="">
+        <br><br>
+        <button onclick="設定controller_name()" style="padding:5px; border-radius:5px;; color:white; background-color:red; border:none; font-size:14px; margin-left:10px; margin-top:-5px" >
+          確定
+        </button>
+        <button onclick="取消設定()" style="padding:5px; border-radius:5px;; color:white; background-color:lightgray
+         ; border:none; font-size:14px; float:right; margin-right:20px; margin-top:-5px" >
+          取消
+        </button>        
+    </div>            
+            
+
+    <div id="msgDialog" style=" position: absolute; left: 50%; top:0; transform:translate(-50%, 0%); background-color:white; border-radius:10px; padding: 30px; font-size:20px; display:none">
+      <div id="握力器尚未設定msg">
+        握力器尚未設定連接位址，請先點擊右上角的  
+        <img src="images/gear_icon.png" style="float:right; width:30px;"><br>
+        進行設定。
+      </div>
+    </div>
+             
+    <div id="intro" class="content" style="margin-top:-120px">
+      <div style="float:left; width:20%;text-align: center; margin-top:100px; margin-left:30px; ">
+
+<!--
+        <div style="font-size:20px;font-weight:bold; padding:20px; border-radius:5px; background-color:#55555555; border-radius:10px">
+          請聯絡管理人員了解如何加入 LINE 群組
+        </div>
+-->
+        <div style="text-align:left; margin-left:0px; margin-top:0px; font-size:16px">
+          <div>握力器名稱: </div>   
+          <label id="controller_status" style="float:right; margin-top:-27px; margin-right:-10px; background-color:red; color:white; border-radius:5px; padding:5px; font-size:14px; ">
+            未設定
+          </label><br><br>
+          
+          <div>握力器連線: </div> 
+          <label id="dyno_status" style="float:right; margin-top:-25px; margin-right:-10px; background-color:red; color:white; border-radius:5px; padding:5px; font-size:14px">
+            未連線
+          </label>
+          <div style="margin-top:5px">
+            <label id="握力器連線狀態" style="">狀態: 連接中 ...</label><br> 
+          </div>        
+          <br>                   
+                    
+          <div>網路連線: </div> 
+          <label id="internet_status" style="float:right; margin-top:-25px; margin-right:-10px; background-color:red; color:white; border-radius:5px; padding:5px; font-size:14px">
+            未連線
+          </label>
+          <div style="margin-top:5px">
+            <label id="網路連線狀態" style="">狀態: 連接中 ...</label><br> 
+          </div>  
+          <br>         
+          
+          <div>資料連線:</div>
+          <label id="mqtt_status" style="float:right; margin-top:-25px; margin-right:-10px; background-color:red; color:white; border-radius:5px; padding:5px; font-size:14px">
+            未連線
+          </label>
+          <div style="margin-top:5px">
+            <label id="資料連線狀態" style="">狀態: 連接中 ...</label><br> 
+          </div>  
+          <br>           
+          
+          <button id="檢查連線按鈕" onclick="檢查連線()" style="font-size:20px; float:right; margin-right:-10px; background-color:red; color:white; border-radius:5px; padding:5px; border:none; display:none">
+            檢查連線
+          </button>             
+        </div>  
+        
+        <div style="font-size:20px;font-weight:bold; padding:20px; border-radius:5px; background-color:#55555555; border-radius:10px; margin-top:20px">
+          請聯絡管理人員了解如何加入 LINE 群組
+        </div>
+                    
+      </div>
+
+      <div style="height:90%; float:left; width:26%; margin-left:4%; margin-top:10px">      
+        <div style="font-size:30px; font-weight:bold">
+        <img src="images/step1.png" style="width:60px"><br>
+        請打開 <span style="font-family: Arial, Helvetica, sans-serif;">LINE</span> 群組點擊 
+        <span onclick="alert('請點擊手機上的 握力量測 圖示')" style="color:darkgreen; text-decoration:underline">&nbsp握力量測</span> &nbsp; &nbsp; &nbsp; 圖示，再打開傳回的網址，
+        </div><br>
+          <!--<img src="images/linebot_small.png" style="width:250px; margin-top:-10px">-->
+      </div>
+
+      <div style="height:90%; float:left; width:26%;; margin-top:10px">      
+        <div style="margin-left:5%; font-size:30px; font-weight:bold">
+        <img src="images/step2.png" style="width:60px"><br>
+          再點擊手機畫面的 <span onclick="alert('請點擊手機上的 進行量測 按鈕')" style="color:red; text-decoration:underline">進行量測</span> 按鈕，傳送量測要求給握力器，</div><br>
+          <!--<img src="images/webapp_small.png" style="width:250px; margin-left:5%; margin-top:-10px">-->
+      </div>  
+      
+      <div style="position:absolute; bottom:0px; left:35%">
+        <!--phoneInHand.png is modified from @charlesdeluvio Unsplash-->
+        <img src="images/phoneInHand.png" style="width:75%;height:75%">
+        
+      </div>
+      
+      <div id="dynoTest" style="display:none; float:right; width:200px; margin-right:5px; margin-top:30px">
+        <div style="font-size:24px; font-weight:bold; margin-left:50px">試按 握力器</div>
+        <div id="measureDyno" style="float:right; font-size: 40px; background-color:antiquewhite; width:120px; margin-right:20px; border-radius: 20px; padding:10px; font-family:Ariel, monospace; font-weight:bold; margin-top:10px">000.0
+        </div>
+      </div>
+            
+    </div>        
+       
+    <div id="request" class="content" style="text-align:center; font-size:24px; font-family: Arial, Helvetica, sans-serif; display:none; align-items:center; display:none">
+
+      <img id="user_pic" src="images/user_blank.png" style="width:200px; height:200px; border-radius:50%; margin-top:-50px" onerror="this.src='images/user_blank.png';"/><br><br>
+      
+      <label id="user_name" ></label><br>
+      <label id="user_phone"></label><br>
+      <br><br>
+      
+      <button onclick="開始量測()" style="padding:10px; border-radius:10px; color:white; background-color:red; border:none; font-size:24px; margin-top:-20px" >
+        開始量測
+      </button>
+      <br><br>
+      <button onclick="取消量測()" style="padding:10px; border-radius:10px;; color:white; background-color:lightgray; border:none; font-size:24px" >
+        取消量測
+      </button>      
+ 
+    </div>      
+          
+    <div id="measureRight" class="content" style="margin-top:-120px; display:none">
+      <div style="height:90%; float:left; width:26%; margin-left:24%; margin-top:0px; text-align:center">      
+        <div style="font-size:24px; font-weight:bold; font-family:Ariel, monospace; margin-top:120px">
+          右手握力數值(kg)
+        </div><br>
+        <div id="measureRightHand" style="font-size: 56px; background-color:antiquewhite; width:200px; margin-left:25px; border-radius: 20px; padding:10px; font-family:Ariel, monospace; font-weight:bold; margin-top:-15px">000.0</div><br><br>
+        
+        <div style="font-size:24px; font-weight:bold">滿意數值後，改用</div>
+        
+        <button onclick="量測左手()" style="margin-top:20px; padding:10px; border-radius:10px;; color:white; background-color:red; border:none; font-size:24px" >
+          左手量測
+        </button><br><br>
+        
+        <button onclick="取消量測()" style="padding:10px; border-radius:10px;; color:white; background-color:lightgray; border:none; font-size:24px" >
+          取消量測
+        </button>         
+        
+      </div>
+
+      <div style="height:90%; float:left; width:270px;; margin-top:20px">      
+        <div style="margin-left:5%; font-size:18px; font-weight:bold">
+          請量測右手握力，用力按壓後，放開後會嗶一聲，握力值會顯示在左邊的 右手握力數值 欄。<br>可重複量測，
+        </div><br>
+        <img src="images/MeasureRightHand.png" style="width:300px; margin-left:5%">
+        
+      </div>  
+    </div>        
+         
+    <div id="measureLeft" class="content" style="margin-top:-120px; display:none">
+      <div style="height:90%; float:left; width:270px; margin-left:24%; margin-top:20px">      
+        <div style="font-size:18px; font-weight:bold">
+          請量測左手握力，用力按壓後，&nbsp 放開後會嗶一聲，握力值會顯示在右邊 左手握力數值 欄。<br>可重複量測，
+        </div><br>
+        <img src="images/MeasureLeftHand.png" style="width:300px;">
+      </div>
+
+      <div style="height:90%; float:left; width:300px; margin-left:%; margin-top:10px; text-align:center">      
+        <div style="font-size:24px; font-weight:bold;font-family:Ariel, monospace; margin-left: 30px; width:300px">
+          已量得右手握力數值(kg)
+        </div><br>
+        <div id="measureRightHand2" style="font-size: 56px; width:200px; margin-left:70px;font-family:Ariel, monospace; font-weight:bold; margin-top:-20px">000.0</div><br><br>
+        
+        <div style="font-size:24px; font-weight:bold;font-family:Ariel, monospace; margin-top:-25px; margin-left:20px">
+          左手握力數值(kg)
+        </div><br>
+        <div id="measureLeftHand" style="font-size: 56px; background-color:antiquewhite; width:200px; margin-left:20%; border-radius: 20px; padding:10px; font-family:Ariel, monospace; font-weight:bold; margin-top:-15px">000.0</div><br><br>        
+        
+        <div style="margin-left:-30px; width:400px">
+          <div style="font-size:24px; font-weight:bold">滿意數值後</div>
+
+<!--          <button onclick="uploadByAPI()" style="margin-top:10px; padding:10px; border-radius:10px;; color:white; background-color:red; border:none; font-size:24px" >-->
+          <button onclick="" style="margin-top:10px; padding:10px; border-radius:10px;; color:white; background-color:red; border:none; font-size:24px" >
+            上傳量測數值
+          </button>
+          <br><br><br>
+
+          <div style="font-size:24px; font-weight:bold">也可以</div>
+
+          <button onclick="開始量測()" style="margin-top:10px; padding:10px; border-radius:10px;; color:white; background-color:red; border:none; font-size:24px; margin-left:-5x" >
+            重新量測
+          </button>
+
+          <span style="font-size:24px; font-weight:bold; margin-left:5px; margin-right:5px">或</span>                      
+          <button onclick="取消量測()" style="padding:10px; border-radius:10px;; color:white; background-color:lightgray; border:none; font-size:24px" >
+            放棄量測
+          </button>  
+        </div>                                              
+      </div>  
+    </div>                     
+       
+       
+    <script>
+      
+      var userID="";
+      
+      var app_status={
+        "controller_nameSet": false,
+        "internetOnline": false,
+        "mqttOnline": false,
+        "dynoOnline": false
+      };
+    
+      $("#version").text(app_ver);
+      
+      // read controller name
+      var controller_name=localStorage.getItem('controller_name');
+      console.log(controller_name);
+      if (controller_name==null){
+        $("#msgDialog").show();
+        app_status.controller_nameSet=false;
+        $("#controller_status").text("未設定");
+      } else {
+        app_status.controller_nameSet=true;
+        $("#controller_name_input").val(controller_name);
+        
+        $("#controller_status").text(controller_name);        
+        $("#controller_status").css("color", "black");        
+        $("#controller_status").css("background-color", "transparent");        
+        $("#controller_status").css("font-size", "20px");        
+        $("#controller_status").css("font-weight", "bold");        
+        $("#controller_status").css("margin-right", "-20px");        
+      }
+      
+      //check internet online
+      checkInternet();
+      
+      var current_state=0;//-3:MQTT未連線
+                           //-2:網路未連線
+                           //-1:藍芽裝置未上線
+                           // 0:intro;
+                           // 1:要求量測
+                           // 2:量測右手
+                           // 3:量測左手
+                           // 4:藍芽斷線，states.splice[-1,1]
+      
+
+
+      var beep_enable=false;      
+      var states=['idle', '要求量測','右手量測','左手量測', '藍芽斷線'];   
+      
+      //"3a8.....cloud" 要改為從 Firebase 取得 
+      var mqtt_client = new Paho.MQTT.Client("3a8247b564f04a0a81e7e1d070882e1e.s1.eu.hivemq.cloud", 8884, "web_" + parseInt(Math.random() * 100, 10));
+
+      // set callback handlers
+      mqtt_client.onConnectionLost = onConnectionLost;
+      mqtt_client.onMessageArrived = onMessageArrived;
+      var options = { //要改為從 Firebase 取得
+        useSSL: true,
+        userName: "ugym-devices",
+        password: "Ab-123456",        
+        onSuccess:onConnect,
+        onFailure:doFail
+      }
+
+      // connect the mqtt_client
+      mqtt_client.connect(options);    
+      
+      var 握力器最後上線時間=Date.now();
+      var MQTT最後連線時間=Date.now();
+//      
+//      // 每 5 秒發送 app_online 給 MQTT
+//      setInterval( ()=>{        
+//        publish_app_online();              
+//      }, 5000); 
+//      
+//      // 每 10 秒檢查 MQTT 和 握力器 連線狀態
+//      setInterval( ()=>{  
+//        
+//        // 離 MQTT最後連線時間 超過 5 分鐘，則 reset
+//        if (Date.now()-MQTT最後連線時間>300000){
+//          location.reload();
+//        }
+//        
+//        if (Date.now()-MQTT最後連線時間>10000){
+//          console.log("MQTT timeout");
+//          app_status.mqttOnline=false;
+//          $("#mqtt_status").text("未連線");               
+//          $("#mqtt_status").css("background-color", "red");   
+//          $("#資料連線狀態").show();
+//        } else {
+//          console.log("MQTT is connected");
+//          app_status.mqttOnline=true;
+//          $("#mqtt_status").text("已連線");               
+//          $("#mqtt_status").css("background-color", "green");   
+//          $("#資料連線狀態").hide();
+//        }
+//        
+//        if ((Date.now()-握力器最後上線時間)>6000){
+//          console.log("握力器 offline");
+//          app_status.dynoOnline=false;
+//          $("#dyno_status").text("未連線");               
+//          $("#dyno_status").css("background-color", "red");    
+//          $("#握力器連線狀態").text("狀態: 未連上網路");
+//          $("#握力器連線狀態").show();     
+//          
+//          $("#dynoTest").hide();
+//        } else {
+//          if ( $("#握力器連線狀態").text()=="狀態: OK"){
+//            console.log("握力器 online");
+//            app_status.dynoOnline=true;
+//            $("#dyno_status").text("已連線");               
+//            $("#dyno_status").css("background-color", "green");  
+//            $("#握力器連線狀態").hide();
+//            
+//            $("#dynoTest").show();
+//          }
+//        }                        
+//      }, 1000);   
+//      
+      
+//      移到前面  
+//      
+//      function set_settings(){
+//
+//        $("#controller_name_input").val(controller_name); 
+//        
+//        $("#msgDialog").hide();
+//        $("#settings").show();
+//        
+//        
+//      }
+//      
+//      function 要求量測(user_info) {  
+//        
+//        if (!app_status.internetOnline) {
+//          alert("請檢查網際網路連線!");
+//          return;
+//        }
+//        
+//        if (!app_status.mqttOnline) {
+//          alert("資料庫未連線，請洽管理員!");
+//          return;
+//        }        
+//        
+//        if (!app_status.dynoOnline) {
+//          alert("握力器尚未連線，請打開握力器!");
+//          return;
+//        }        
+//          
+//        $("#gear_icon").hide();
+//              
+//        if (confirm(user_info.name + " 要求握力量測!\n\n如果名字跟您不符，請取消量測\n重新再從 手機 點擊 進行量測!")){
+//          $(".content").hide()
+//          userID=user_info.userid;
+//          
+//          $("#user_name").text("暱稱: "+user_info.name);
+//          $("#user_phone").text("電話: "+user_info.phone);
+//          $("#user_pic").attr('src', user_info.pic);
+//          $("#request").show();  
+//          current_state=1;
+//          beep(); // depends on beep_enable
+//        } else {
+//          $("#user_name").text("");
+//          $("#user_phone").text("");
+//          $("#user_pic").attr('src', "");    
+//          $("#gear_icon").show() 
+//          current_state=0;
+//          beep(); // depends on beep_enable
+//        }
+//        
+//        $("#measureRightHand").text("000.0");
+//        $("#measureRightHand2").text("000.0");
+//        $("#measureLeftHand").text("000.0");        
+//      }
+//      
+//      function 取消量測(){
+//        //window.location.href = window.location.href;
+//        if (confirm("取消或放棄量測，資料將被清除。要再量測必須從手機 點擊 進行量測")){
+//          current_state=0;
+//          $(".content").hide();
+//          $("#intro").show();
+//          $("#gear_icon").show()        
+//          beep(); // depends on beep_enable
+//        }
+//        
+//      }
+//      
+//      function 開始量測(){
+//        $(".content").hide();
+//        
+//        $("#measureRight").show();
+//        $("#status").text("進行右手握力量測");
+//        
+//        current_state=2;
+//        
+//        beep(); // depends on beep_enable      
+//      }
+//      
+//      function 量測左手(){
+//        $(".content").hide()
+//
+//        $("#measureLeft").show();
+//        $("#status").text("進行左手握力量測");   
+//        
+//        current_state=3;        
+//        
+//        beep(); // depends on beep_enable
+//      }      
+//      
+//      // called when the mqtt_client connects
+//      function onConnect() {
+//        // Once a connection has been made, make a subscription and send a message.
+//        console.log("MQTT onConnect");
+//        app_status.mqttOnline=true;
+//        $("#mqtt_status").text("已連線");               
+//        $("#mqtt_status").css("background-color", "green");  
+//        $("#資料連線狀態").hide();
+//        $("#檢查連線按鈕").hide();
+//        
+//        if ($("#controller_name_input").val() !=""){
+//          mqtt_client.subscribe($("#controller_name_input").val()+"/#"); 
+//          publish_app_online();
+//        } else {
+//          console.log("握力器名稱不得為空白");
+//        }
+//      }
+//
+//      function doFail(e){
+//        console.log(e);
+//        console.log("請確認網路是否可連上網際網路");
+//        
+//      }
+//
+//      // called when the mqtt_client loses its connection
+//      function onConnectionLost(responseObject) {
+//        if (responseObject.errorCode !== 0) {
+//          console.log("onConnectionLost:"+responseObject.errorMessage);
+//          app_status.mqttOnline=false;
+//          $("#mqtt_status").text("未連線");               
+//          $("#mqtt_status").css("background-color", "red"); 
+//          
+//          checkInternet();
+//        }
+//      }
+//
+//      // called when a message arrives
+//      function onMessageArrived(message) {
+//        console.log("onMessageArrived:");
+//        
+//        var topic=message.destinationName.split('/');
+//        var sn         = topic[0];
+//        var cmd_status = topic[1];
+//        console.log(sn, cmd_status);
+//        
+//        switch(cmd_status) {
+//          case "dyno_online":
+//              var online_info=JSON.parse(message.payloadString);
+//              console.log(online_info);    
+//              握力器最後上線時間=Date.now();
+//            
+//              if (online_info.status=="OK"){
+//                app_status.dynoOnline=true;
+//                $("#dyno_status").text("已連線");               
+//                $("#dyno_status").css("background-color", "green");  
+//                $("#握力器連線狀態").text("狀態: "+online_info.status); 
+//                $("#握力器連線狀態").hide();    
+//              } else {
+//                app_status.dynoOnline=false;
+//                $("#dyno_status").text("未連線");               
+//                $("#dyno_status").css("background-color", "red");   
+//                $("#握力器連線狀態").text("狀態: "+online_info.status);                
+//                $("#握力器連線狀態").show();                 
+//              }            
+//              break;    
+//          case "dyno_offline": //目前沒用到
+//              var online_info=JSON.parse(message.payloadString);
+//              console.log(online_info);   
+//              握力器最後上線時間=Date.now();
+//              app_status.dynoOnline=false;
+//              $("#dyno_status").text("未連線");               
+//              $("#dyno_status").css("background-color", "red");   
+//              $("#握力器連線狀態").text("狀態: "+online_info.status);                
+//              $("#握力器連線狀態").show();                
+//              break;            
+//          case "cmd":
+//              var user_info=JSON.parse(message.payloadString);
+//              console.log(user_info);
+//              if (current_state<0) {
+//                alert("連線有問題，無法執行命令");
+//                return;
+//              }
+//              if (user_info.cmd=="要求量測"){
+//                 if (current_state==0) 要求量測(user_info); 
+//              }
+//              break;
+//          case "ble":
+//              var ble=JSON.parse(message.payloadString);
+//              console.log(ble);
+//              //ble.online true/false 代表 ESP32 有無連上握力器的 BLE
+//              break;
+//          case "dyno_data":
+//              console.log(message.payloadString);            
+//              var dyna_data=JSON.parse(message.payloadString);
+//              console.log(dyna_data);
+//              //dyna_data.measurement string 代表 握力器 傳來的測量值
+//              process_dyno_data(dyna_data);
+//              break;  
+//          case "app_online":
+//              var online_info=JSON.parse(message.payloadString);   
+//              //console.log(online_info);
+//              MQTT最後連線時間=online_info;
+//              app_status.mqttOnline=true;
+//              $("#mqtt_status").text("已連線");               
+//              $("#mqtt_status").css("background-color", "green");  
+//              break;
+//          default:
+//            console.log("cmd/status:", cmd_status);
+//            var cmd_status_data=JSON.parse(message.payloadString);
+//            console.log(cmd_status_data);            
+//        }
+////        if (cmd_status=="cmd"){
+////          var user_info=JSON.parse(message.payloadString);
+////          console.log(user_info);
+////          
+////          if (user_info.cmd=="要求量測" && current_state==0) 要求量測(user_info);
+////          
+////        }
+//        
+//
+//      }
+//          
+//      function publish_app_online(){
+//        var message; 
+//          message = new Paho.MQTT.Message(Date.now().toString());
+//          message.destinationName = controller_name+"/app_online"; //"Orange0001/app_online";
+//          message.qos=0; //不見得要 1, 0 應該也可以
+//          mqtt_client.send(message);
+//      }
+//      
+//      function publish_state(){
+//        var message; 
+//        //console.log(current_state);
+//        if (app_status.mqttOnline){
+//          message = new Paho.MQTT.Message('{"status":"'+states[current_state]+'", "time_stamp":"'+Date.now().toString()+'"}');
+//          message.destinationName = controller_name+"/status"; //"Orange0001/status";
+//          message.qos=0; //不見得要 1, 0 應該也可以
+//          mqtt_client.send(message);
+//        }
+//      }
+//      
+//      async function uploadByAPI(){
+//        
+//        var paramToSend=apiSite+"?API=11&DynoSN="+controller_name+
+//                                "&UserId="+userID+
+//                                "&LeftHand="  +$("#measureLeftHand").text()+
+//                                "&RightHand=" +$("#measureRightHand").text()+
+//                                "&Measure_time="+Date.now().toString();   
+//        console.log(paramToSend);        
+//
+//        $.loading.start('上傳資料');
+//        
+//        await fetch(paramToSend)
+//        .then(response => response.text())
+//        .then((text) => {
+//          console.log(text);
+//        })
+//        .catch((error)=>{
+//          console.log('There has been a problem with your fetch operation: ', error.message);
+//        })     
+//
+//        
+////          await fetch(apiSite)
+////          .then(response => response.json())
+////          .then((json) => {
+////            //console.log(json);
+////            console.log("Internet Online");
+////            app_status.internetOnline=true;
+////          })
+////          .catch((error)=>{
+////            console.log('There has been a problem with your fetch operation: ', error.message);
+////            app_status.internetOnline=false;
+////           })     
+////
+////          if (app_status.internetOnline){
+////            $("#internet_status").text("已連線");               
+////            $("#internet_status").css("background-color", "green");   
+////          } else {
+////            $("#internet_status").text("未連線");               
+////            $("#internet_status").css("background-color", "red"); 
+////            $("#檢查連線按鈕").show();
+////          }        
+////          
+//          $.loading.end();
+//          alert("資料上傳成功");
+//          
+//          // back to the initial screen
+//          current_state=0;
+//          $(".content").hide();
+//          $("#intro").show();
+//          $("#gear_icon").show()        
+//          beep(); // depends on beep_enable
+//          
+//      }
+//      
+////      function publish(pub_msg){
+////        var message;
+////        message = new Paho.MQTT.Message(pub_msg);
+////        message.destinationName = "presence";
+////        mqtt_client.send(message);      
+////      }      
+//      
+//      async function checkInternet(){
+//        await fetch('https://jsonplaceholder.typicode.com/todos/1')
+//        .then(response => response.json())
+//        .then((json) => {
+//          //console.log(json);
+//          console.log("Internet Online");
+//          app_status.internetOnline=true;
+//        })
+//        .catch((error)=>{
+//          console.log('There has been a problem with your fetch operation: ', error.message);
+//          app_status.internetOnline=false;
+//         })     
+//        
+//        if (app_status.internetOnline){
+//          $("#internet_status").text("已連線");               
+//          $("#internet_status").css("background-color", "green");  
+//          $("#網路連線狀態").hide();
+//        } else {
+//          $("#internet_status").text("未連線");               
+//          $("#internet_status").css("background-color", "red"); 
+//          $("#網路連線狀態").show();
+//          $("#檢查連線按鈕").show();
+//        }
+//      }
+//       
+//      async function 檢查連線(){
+//        location.reload(); //reset
+//      }
+//
+//      function 設定controller_name(){
+//        var controller_nameInput=$("#controller_name_input").val();
+//        console.log(controller_nameInput);
+//        
+//        if (controller_nameInput=="") {
+//          alert("不得為空白，請重新輸入");
+//        } else {
+//          localStorage.setItem('controller_name', controller_nameInput);
+//          location.reload();
+//        }        
+//        
+////        var mac_addr_reg= new RegExp(/^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$/);
+////
+////        if ((controller_nameInput=="") || !(mac_addr_reg.test(controller_nameInput))) {
+////          alert("不得為空白 或 格式不對，請重新輸入");
+////        } else {
+////          localStorage.setItem('controller_name', controller_nameInput);
+////          location.reload();
+////        }
+//      }
+//      
+//      function 取消設定(){
+//        $("#settings").hide();
+//      }
+//      
+//      function process_dyno_data(dyna_data){
+//        flash_reading();
+//        console.log(current_state, typeof dyna_data.value);
+//        if (current_state==2) {
+//          $("#measureRightHand").text(dyna_data.value/10);
+//          $("#measureRightHand2").text(dyna_data.value/10);
+//        }
+//        else if (current_state==3)
+//          $("#measureLeftHand").text(dyna_data.value/10);
+//        else if (current_state==0)
+//          $("#measureDyno").text(dyna_data.value/10);
+//      };
+//            
+//      function beep() {
+//        if(beep_enable) {
+//          var snd = new Audio("data:audio/wav;base64,//uQRAAAAWMSLwUIYAAsYkXgoQwAEaYLWfkWgAI0wWs/ItAAAGDgYtAgAyN+QWaAAihwMWm4G8QQRDiMcCBcH3Cc+CDv/7xA4Tvh9Rz/y8QADBwMWgQAZG/ILNAARQ4GLTcDeIIIhxGOBAuD7hOfBB3/94gcJ3w+o5/5eIAIAAAVwWgQAVQ2ORaIQwEMAJiDg95G4nQL7mQVWI6GwRcfsZAcsKkJvxgxEjzFUgfHoSQ9Qq7KNwqHwuB13MA4a1q/DmBrHgPcmjiGoh//EwC5nGPEmS4RcfkVKOhJf+WOgoxJclFz3kgn//dBA+ya1GhurNn8zb//9NNutNuhz31f////9vt///z+IdAEAAAK4LQIAKobHItEIYCGAExBwe8jcToF9zIKrEdDYIuP2MgOWFSE34wYiR5iqQPj0JIeoVdlG4VD4XA67mAcNa1fhzA1jwHuTRxDUQ//iYBczjHiTJcIuPyKlHQkv/LHQUYkuSi57yQT//uggfZNajQ3Vmz+Zt//+mm3Wm3Q576v////+32///5/EOgAAADVghQAAAAA//uQZAUAB1WI0PZugAAAAAoQwAAAEk3nRd2qAAAAACiDgAAAAAAABCqEEQRLCgwpBGMlJkIz8jKhGvj4k6jzRnqasNKIeoh5gI7BJaC1A1AoNBjJgbyApVS4IDlZgDU5WUAxEKDNmmALHzZp0Fkz1FMTmGFl1FMEyodIavcCAUHDWrKAIA4aa2oCgILEBupZgHvAhEBcZ6joQBxS76AgccrFlczBvKLC0QI2cBoCFvfTDAo7eoOQInqDPBtvrDEZBNYN5xwNwxQRfw8ZQ5wQVLvO8OYU+mHvFLlDh05Mdg7BT6YrRPpCBznMB2r//xKJjyyOh+cImr2/4doscwD6neZjuZR4AgAABYAAAABy1xcdQtxYBYYZdifkUDgzzXaXn98Z0oi9ILU5mBjFANmRwlVJ3/6jYDAmxaiDG3/6xjQQCCKkRb/6kg/wW+kSJ5//rLobkLSiKmqP/0ikJuDaSaSf/6JiLYLEYnW/+kXg1WRVJL/9EmQ1YZIsv/6Qzwy5qk7/+tEU0nkls3/zIUMPKNX/6yZLf+kFgAfgGyLFAUwY//uQZAUABcd5UiNPVXAAAApAAAAAE0VZQKw9ISAAACgAAAAAVQIygIElVrFkBS+Jhi+EAuu+lKAkYUEIsmEAEoMeDmCETMvfSHTGkF5RWH7kz/ESHWPAq/kcCRhqBtMdokPdM7vil7RG98A2sc7zO6ZvTdM7pmOUAZTnJW+NXxqmd41dqJ6mLTXxrPpnV8avaIf5SvL7pndPvPpndJR9Kuu8fePvuiuhorgWjp7Mf/PRjxcFCPDkW31srioCExivv9lcwKEaHsf/7ow2Fl1T/9RkXgEhYElAoCLFtMArxwivDJJ+bR1HTKJdlEoTELCIqgEwVGSQ+hIm0NbK8WXcTEI0UPoa2NbG4y2K00JEWbZavJXkYaqo9CRHS55FcZTjKEk3NKoCYUnSQ0rWxrZbFKbKIhOKPZe1cJKzZSaQrIyULHDZmV5K4xySsDRKWOruanGtjLJXFEmwaIbDLX0hIPBUQPVFVkQkDoUNfSoDgQGKPekoxeGzA4DUvnn4bxzcZrtJyipKfPNy5w+9lnXwgqsiyHNeSVpemw4bWb9psYeq//uQZBoABQt4yMVxYAIAAAkQoAAAHvYpL5m6AAgAACXDAAAAD59jblTirQe9upFsmZbpMudy7Lz1X1DYsxOOSWpfPqNX2WqktK0DMvuGwlbNj44TleLPQ+Gsfb+GOWOKJoIrWb3cIMeeON6lz2umTqMXV8Mj30yWPpjoSa9ujK8SyeJP5y5mOW1D6hvLepeveEAEDo0mgCRClOEgANv3B9a6fikgUSu/DmAMATrGx7nng5p5iimPNZsfQLYB2sDLIkzRKZOHGAaUyDcpFBSLG9MCQALgAIgQs2YunOszLSAyQYPVC2YdGGeHD2dTdJk1pAHGAWDjnkcLKFymS3RQZTInzySoBwMG0QueC3gMsCEYxUqlrcxK6k1LQQcsmyYeQPdC2YfuGPASCBkcVMQQqpVJshui1tkXQJQV0OXGAZMXSOEEBRirXbVRQW7ugq7IM7rPWSZyDlM3IuNEkxzCOJ0ny2ThNkyRai1b6ev//3dzNGzNb//4uAvHT5sURcZCFcuKLhOFs8mLAAEAt4UWAAIABAAAAAB4qbHo0tIjVkUU//uQZAwABfSFz3ZqQAAAAAngwAAAE1HjMp2qAAAAACZDgAAAD5UkTE1UgZEUExqYynN1qZvqIOREEFmBcJQkwdxiFtw0qEOkGYfRDifBui9MQg4QAHAqWtAWHoCxu1Yf4VfWLPIM2mHDFsbQEVGwyqQoQcwnfHeIkNt9YnkiaS1oizycqJrx4KOQjahZxWbcZgztj2c49nKmkId44S71j0c8eV9yDK6uPRzx5X18eDvjvQ6yKo9ZSS6l//8elePK/Lf//IInrOF/FvDoADYAGBMGb7FtErm5MXMlmPAJQVgWta7Zx2go+8xJ0UiCb8LHHdftWyLJE0QIAIsI+UbXu67dZMjmgDGCGl1H+vpF4NSDckSIkk7Vd+sxEhBQMRU8j/12UIRhzSaUdQ+rQU5kGeFxm+hb1oh6pWWmv3uvmReDl0UnvtapVaIzo1jZbf/pD6ElLqSX+rUmOQNpJFa/r+sa4e/pBlAABoAAAAA3CUgShLdGIxsY7AUABPRrgCABdDuQ5GC7DqPQCgbbJUAoRSUj+NIEig0YfyWUho1VBBBA//uQZB4ABZx5zfMakeAAAAmwAAAAF5F3P0w9GtAAACfAAAAAwLhMDmAYWMgVEG1U0FIGCBgXBXAtfMH10000EEEEEECUBYln03TTTdNBDZopopYvrTTdNa325mImNg3TTPV9q3pmY0xoO6bv3r00y+IDGid/9aaaZTGMuj9mpu9Mpio1dXrr5HERTZSmqU36A3CumzN/9Robv/Xx4v9ijkSRSNLQhAWumap82WRSBUqXStV/YcS+XVLnSS+WLDroqArFkMEsAS+eWmrUzrO0oEmE40RlMZ5+ODIkAyKAGUwZ3mVKmcamcJnMW26MRPgUw6j+LkhyHGVGYjSUUKNpuJUQoOIAyDvEyG8S5yfK6dhZc0Tx1KI/gviKL6qvvFs1+bWtaz58uUNnryq6kt5RzOCkPWlVqVX2a/EEBUdU1KrXLf40GoiiFXK///qpoiDXrOgqDR38JB0bw7SoL+ZB9o1RCkQjQ2CBYZKd/+VJxZRRZlqSkKiws0WFxUyCwsKiMy7hUVFhIaCrNQsKkTIsLivwKKigsj8XYlwt/WKi2N4d//uQRCSAAjURNIHpMZBGYiaQPSYyAAABLAAAAAAAACWAAAAApUF/Mg+0aohSIRobBAsMlO//Kk4soosy1JSFRYWaLC4qZBYWFRGZdwqKiwkNBVmoWFSJkWFxX4FFRQWR+LsS4W/rFRb/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////VEFHAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAU291bmRib3kuZGUAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAMjAwNGh0dHA6Ly93d3cuc291bmRib3kuZGUAAAAAAAAAACU=");  
+//          snd.play();
+//        }
+//      }
+//
+//      function toggle_beep(){
+//        if (beep_enable==false){
+//          beep_enable=true;
+//          $("#spkr_icon").attr("src", "images/spkr_on.png");
+//        }else {
+//          beep_enable=false;
+//          $("#spkr_icon").attr("src", "images/spkr_off.png");          
+//        }
+//      }
+//      
+//      function flash_reading(){
+//        $("#measureRightHand").css("background-color", "black"); 
+//        $("#measureLeftHand").css("background-color", "black"); 
+//        $("#measureDyno").css("background-color", "black"); 
+//        setTimeout(()=>{
+//          $("#measureRightHand").css("background-color", "antiquewhite");
+//          $("#measureLeftHand").css("background-color", "antiquewhite");
+//          $("#measureDyno").css("background-color", "antiquewhite");
+//        }, 300);
+//      }
+//      
+    </script>
+    
+  </body>
+
+</html>
